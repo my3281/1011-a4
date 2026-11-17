@@ -34,6 +34,42 @@ def example_transform(example):
 # You can randomly select each word with some fixed probability to replace by a synonym.
 
 
+QWERTY_NEIGHBORS = {
+    "q": "wa", "w": "qes", "e": "wrd", "r": "etf", "t": "ryg", "y": "tuh",
+    "u": "yij", "i": "uok", "o": "ipl", "p": "ol",
+    "a": "qsz", "s": "awdz", "d": "sefx", "f": "drgc", "g": "fthv",
+    "h": "gyjb", "j": "hukn", "k": "jilm", "l": "kop",
+    "z": "asx", "x": "zsdc", "c": "xdfv", "v": "cfgb", "b": "vghn",
+    "n": "bhjm", "m": "njk",
+}
+SYN_PROB = 0.3
+TYPO_PROB = 0.15
+
+
+def _get_synonym(word):
+    if word[0].isupper():
+        return None
+    synsets = [x for x in wordnet.synsets(word) if x.pos() in ("a", "s", "r")]
+    if not synsets:
+        return None
+    candidates = [l.name() for l in synsets[0].lemmas()
+                  if "_" not in l.name() and l.name().lower() != word.lower()]
+    if not candidates:
+        return None
+    return random.choice(candidates)
+
+
+def _add_typo(word):
+    positions = [i for i, c in enumerate(word) if c.lower() in QWERTY_NEIGHBORS]
+    if not positions:
+        return word
+    i = random.choice(positions)
+    new_c = random.choice(QWERTY_NEIGHBORS[word[i].lower()])
+    if word[i].isupper():
+        new_c = new_c.upper()
+    return word[:i] + new_c + word[i + 1:]
+
+
 def custom_transform(example):
     ################################
     ##### YOUR CODE BEGINGS HERE ###
@@ -44,7 +80,17 @@ def custom_transform(example):
 
     # You should update example["text"] using your transformation
 
-    raise NotImplementedError
+    tokens = word_tokenize(example["text"])
+    new_tokens = []
+    for tok in tokens:
+        if tok.isalpha() and len(tok) > 3 and random.random() < SYN_PROB:
+            syn = _get_synonym(tok)
+            if syn:
+                tok = syn
+        if tok.isalpha() and len(tok) > 2 and random.random() < TYPO_PROB:
+            tok = _add_typo(tok)
+        new_tokens.append(tok)
+    example["text"] = TreebankWordDetokenizer().detokenize(new_tokens)
 
     ##### YOUR CODE ENDS HERE ######
 
