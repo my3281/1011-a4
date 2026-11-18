@@ -14,6 +14,20 @@ from utils import compute_metrics, save_queries_and_records
 
 DEVICE = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 PAD_IDX = 0
+from transformers import T5TokenizerFast
+TOKENIZER = T5TokenizerFast.from_pretrained('google-t5/t5-small')
+LT_TOKEN = 'LESS_THAN'
+
+def generate_sql(args, model, encoder_input, encoder_mask, initial_decoder_inputs):
+    outputs = model.generate(
+        input_ids=encoder_input,
+        attention_mask=encoder_mask,
+        decoder_input_ids=initial_decoder_inputs,
+        max_new_tokens=args.max_gen_len,
+        num_beams=args.num_beams,
+    )
+    texts = TOKENIZER.batch_decode(outputs, skip_special_tokens=True, clean_up_tokenization_spaces=False)
+    return [t.replace(LT_TOKEN, '<').strip() for t in texts]
 
 def get_args():
     '''
@@ -47,6 +61,9 @@ def get_args():
     # Data hyperparameters
     parser.add_argument('--batch_size', type=int, default=16)
     parser.add_argument('--test_batch_size', type=int, default=16)
+
+    parser.add_argument('--max_gen_len', type=int, default=512)
+    parser.add_argument('--num_beams', type=int, default=1)
 
     args = parser.parse_args()
     return args
@@ -138,16 +155,47 @@ def eval_epoch(args, model, dev_loader, gt_sql_pth, model_sql_path, gt_record_pa
     should both provide good results. If you find that this component of evaluation takes too long with your compute,
     we found the cross-entropy loss (in the evaluation set) to be well (albeit imperfectly) correlated with F1 performance.
     '''
-    # TODO
     model.eval()
-    return 0, 0, 0, 0, 0
+    criterion = nn.CrossEntropyLoss()
+    total_loss, total_tokens = 0, 0
+    preds = []
+    with torch.no_grad():
+        for encoder_input, encoder_mask, decoder_input, decoder_targets, initial in tqdm(dev_loader):
+            encoder_input = encoder_input.to(DEVICE)
+            encoder_mask = encoder_mask.to(DEVICE)
+            decoder_input = decoder_input.to(DEVICE)
+            decoder_targets = decoder_targets.to(DEVICE)
+            initial = initial.to(DEVICE)
+
+            logits = model(input_ids=encoder_input, attention_mask=encoder_mask,
+                           decoder_input_ids=decoder_input)['logits']
+            non_pad = decoder_targets != PAD_IDX
+            loss = criterion(logits[non_pad], decoder_targets[non_pad])
+            n = torch.sum(non_pad).item()
+            total_loss += loss.item() * n
+            total_tokens += n
+
+            preds += generate_sql(args, model, encoder_input, encoder_mask, initial)
+
+    save_queries_and_records(preds, model_sql_path, model_record_path)
+    sql_em, record_em, record_f1, error_msgs = compute_metrics(gt_sql_pth, model_sql_path,
+                                                               gt_record_path, model_record_path)
+    error_rate = sum(1 for m in error_msgs if m) / max(len(error_msgs), 1)
+    model.train()
+    return total_loss / total_tokens, record_f1, record_em, sql_em, error_rate
         
 def test_inference(args, model, test_loader, model_sql_path, model_record_path):
     '''
     You must implement inference to compute your model's generated SQL queries and its associated 
     database records. Implementation should be very similar to eval_epoch.
     '''
-    pass
+    model.eval()
+    preds = []
+    with torch.no_grad():
+        for encoder_input, encoder_mask, initial in tqdm(test_loader):
+            preds += generate_sql(args, model, encoder_input.to(DEVICE),
+                                  encoder_mask.to(DEVICE), initial.to(DEVICE))
+    save_queries_and_records(preds, model_sql_path, model_record_path)
 
 def main():
     # Get key arguments
