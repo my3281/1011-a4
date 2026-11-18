@@ -42,8 +42,8 @@ QWERTY_NEIGHBORS = {
     "z": "asx", "x": "zsdc", "c": "xdfv", "v": "cfgb", "b": "vghn",
     "n": "bhjm", "m": "njk",
 }
-SYN_PROB = 0.3
-TYPO_PROB = 0.15
+SYN_PROB = 0.5
+TYPO_PROB = 0.25
 
 
 def _get_synonym(word):
